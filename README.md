@@ -1,0 +1,131 @@
+# Neon Fluid
+
+A browser-based fluid platformer where a glowing liquid character navigates 100 levels driven by real incompressible fluid dynamics. The fluid is not decorative — it is the physics engine. Mouse strokes create pressure waves that lift the player, push boxes, and dissolve barriers.
+
+**[Play it →](https://neonfluid.martincasais.com)**
+
+![Neon Fluid](img.png)
+
+---
+
+## Fluid Simulation
+
+The simulation is a direct implementation of Jos Stam's **"Real-Time Fluid Dynamics for Games"** (GDC 2003), which solves the incompressible Navier-Stokes equations using an unconditionally stable semi-Lagrangian scheme. The original paper made real-time fluid simulation practical by trading physical accuracy for guaranteed stability at any timestep.
+
+Each frame runs three core steps:
+
+1. **Diffusion** — viscosity spreads velocity across neighbouring cells, solved implicitly via Gauss-Seidel iteration to stay stable under large timesteps.
+2. **Advection** — quantities (velocity, density) are transported along the current velocity field using a backwards particle trace and bilinear interpolation.
+3. **Projection** — a pressure Poisson equation is solved to enforce incompressibility (∇·**u** = 0), then the pressure gradient is subtracted from velocity to make the field divergence-free.
+
+On top of Stam's original formulation, the simulation adds **vorticity confinement** — a corrective force proportional to the curl of the velocity field that restores the small-scale rotational detail that numerical diffusion tends to dissipate.
+
+### Dual-simulation architecture
+
+The game runs two independent fluid simulations simultaneously:
+
+| | CPU sim | GPU sim |
+|---|---|---|
+| **Grid** | 256 × 256 | 512 × 512 |
+| **Purpose** | Game physics | Visual rendering |
+| **Solver** | TypeScript, Gauss-Seidel (12 iterations) | WebGL2 GLSL, Jacobi (80 iterations, 2 passes) |
+| **Pressure** | Gauss-Seidel | Jacobi relaxation |
+
+The **CPU simulation** runs on the JavaScript thread and is the authoritative physics engine. Player buoyancy, box movement, barrier dissolution, and wind blowers all read from and write into this grid.
+
+The **GPU simulation** runs entirely in WebGL2 shaders at twice the resolution. Each simulation step is a sequence of fullscreen fragment shader passes — advection, divergence, pressure solve, gradient subtraction, vorticity — ping-ponging between pairs of floating-point textures. Its output is rendered directly to the background canvas as a luminous fluid field. It receives the same force inputs as the CPU sim (scaled and transformed to UV space) but has no effect on game state.
+
+This separation means the visual fluid can run at high resolution without affecting gameplay determinism, and both simulations can be tuned independently.
+
+---
+
+## Gameplay
+
+The player character is a fluid blob that responds to mouse-generated pressure. The core mechanic is dragging the mouse to create upward waves that carry the character across gaps no keyboard jump could reach.
+
+- **10 handcrafted levels** that introduce mechanics progressively: moving platforms, pushable boxes, enemies, wind blowers, fluid barriers, pressure switches, and locked gates.
+- **90 procedurally generated levels** (11–100) built with a seeded PRNG ([mulberry32](https://github.com/bryc/code/blob/master/jshash/PRNGs.md#mulberry32)), so each level index always produces the same layout. Difficulty scales continuously from level 10 onward by adjusting platform count, platform width, gap distance, and the probability of hazards, barriers, spikes, and switch/gate puzzles.
+
+### Mechanics
+
+| Element | Behaviour |
+|---|---|
+| **Mouse drag** | Injects velocity and density into both fluid grids. Creates pressure waves. |
+| **Blowers** | Periodic upward bursts that generate lift — required in mid-game levels. |
+| **Barriers** | Fluid-permeable walls that dissolve under sustained fluid pressure. |
+| **Boxes** | Rigid bodies pushed by fluid momentum; can be stacked or used as steps. |
+| **Switch / Gate** | Stepping on the switch opens the gate blocking the goal. |
+| **Enemies** | Patrol platforms; contact resets the level. |
+| **Spikes** | Static hazards; contact resets the level. |
+
+---
+
+## Audio
+
+All sound is synthesized in real time using the Web Audio API — no audio samples except the menu theme (`theme.mp3`).
+
+Each of the 100 levels gets a unique procedural music track derived from its index: a root frequency chosen from an 8-note cycle, alternating major/minor tonality, a tempo that increases by 1 BPM per level, and an arpeggiator step time that cycles through four rhythmic patterns. Three synthesis layers play simultaneously: a detuned bass oscillator with LFO, a chord pad, and a delay-fed arpeggiator. The menu has a separate ambient drone with a shimmer layer.
+
+Sound preference persists in `localStorage`.
+
+---
+
+## Tech stack
+
+- **Next.js 16** (App Router, static export)
+- **React 19** with `"use client"` game canvas
+- **TypeScript** throughout — no `any`, strict mode
+- **WebGL2** for GPU fluid rendering (no Three.js or external GL library)
+- **Web Audio API** for procedural synthesis
+- No game engine, no physics library, no canvas framework
+
+---
+
+## Project structure
+
+```
+lib/
+  fluid.ts          # CPU Stam solver (256×256, TypeScript)
+  fluid-gpu.ts      # GPU Stam solver (512×512, WebGL2 shaders)
+  fluid-gl.ts       # WebGL2 renderer for the GPU simulation
+  game/
+    index.ts        # Game loop — wires fluid, input, audio, state
+    layout.ts       # State initialisation and level loading
+    levels.ts       # 10 handcrafted level definitions
+    generate.ts     # Procedural level generator (levels 11–100)
+    audio.ts        # Web Audio synthesis engine
+    input.ts        # Keyboard input and menu navigation
+    types.ts        # Shared type definitions
+    update/         # Per-system update functions (player, boxes, enemies…)
+    render/         # Per-system canvas 2D renderers
+app/
+  components/
+    FluidGame.tsx   # React component — canvas setup, mouse handling, RAF loop
+  layout.tsx        # Next.js root layout and metadata
+  page.tsx          # Entry point
+```
+
+---
+
+## Running locally
+
+```bash
+npm install
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000). Requires a desktop browser with WebGL2 support (Chrome, Firefox, Edge — all current versions).
+
+```bash
+npm run build   # production build
+npm run lint    # ESLint
+```
+
+> The game requires a mouse and keyboard. Mobile and tablet devices are not supported.
+
+---
+
+## Reference
+
+Jos Stam — *Real-Time Fluid Dynamics for Games*, GDC 2003.  
+[http://graphics.cs.cmu.edu/nsp/course/15-464/Fall09/papers/StamFluidforGames.pdf](http://graphics.cs.cmu.edu/nsp/course/15-464/Fall09/papers/StamFluidforGames.pdf)
