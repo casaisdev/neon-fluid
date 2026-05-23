@@ -26,14 +26,22 @@ The game runs two independent fluid simulations simultaneously:
 
 | | CPU sim | GPU sim |
 |---|---|---|
-| **Grid** | 256 × 256 | 512 × 512 |
+| **Grid** | 256 × 256 | 128–512 × 128–512 (tier-selected) |
 | **Purpose** | Game physics | Visual rendering |
-| **Solver** | TypeScript, Gauss-Seidel (12 iterations) | WebGL2 GLSL, Jacobi (80 iterations, 2 passes) |
-| **Pressure** | Gauss-Seidel | Jacobi relaxation |
+| **Solver** | TypeScript, Gauss-Seidel (12 iterations) | WebGL2 GLSL, Jacobi (15–40 iterations) |
+| **Thread** | Web Worker (off main thread) | Main thread (GPU) |
 
-The **CPU simulation** runs on the JavaScript thread and is the authoritative physics engine. Player buoyancy, box movement, barrier dissolution, and wind blowers all read from and write into this grid.
+The **CPU simulation** is the authoritative physics engine. Player buoyancy, box movement, barrier dissolution, and wind blowers all read from and write into this grid. It runs entirely inside a **Web Worker** using `SharedArrayBuffer` + `Atomics` for zero-copy communication. Each frame the main thread writes force inputs to shared memory and sends a `CMD_STEP` signal via `Atomics.notify`. The worker blocks on `Atomics.wait`, runs the full Stam step, writes velocity and density back to shared output buffers, and sets `CTRL_READY`. The main thread polls `CTRL_READY` non-blocking at the start of the next RAF — no `postMessage` copies in the hot path.
 
-The **GPU simulation** runs entirely in WebGL2 shaders at twice the resolution. Each simulation step is a sequence of fullscreen fragment shader passes — advection, divergence, pressure solve, gradient subtraction, vorticity — ping-ponging between pairs of floating-point textures. Its output is rendered directly to the background canvas as a luminous fluid field. It receives the same force inputs as the CPU sim (scaled and transformed to UV space) but has no effect on game state.
+The **GPU simulation** runs entirely in WebGL2 shaders. Each step is a sequence of fullscreen fragment shader passes (advection, divergence, pressure solve, gradient subtraction, vorticity) ping-ponging between floating-point texture pairs. Its output is rendered directly to the background canvas. It receives the same force inputs as the CPU sim but has no effect on game state.
+
+GPU resolution and Jacobi iteration count are chosen at startup by `detectGPUTier()`, which runs a warmup draw followed by a timed benchmark of 30 pressure iterations at N = 256 using `gl.finish()` for accurate GPU timing. The result selects one of three configs:
+
+| Tier | Grid | Pressure iterations |
+|------|------|-------------------|
+| `high` | 512 × 512 | 40 |
+| `medium` | 256 × 256 | 25 |
+| `low` | 128 × 128 | 15 |
 
 This separation means the visual fluid can run at high resolution without affecting gameplay determinism, and both simulations can be tuned independently.
 

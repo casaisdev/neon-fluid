@@ -12,6 +12,8 @@ import {
 import { LEVEL_COUNT } from "../levels";
 import type { GameState } from "../types";
 
+let _hudGrad: CanvasGradient | null = null;
+
 // Build a wave Y value: slow swell + mid chop + fine ripple
 function waveY(x: number, W: number, now: number, speed: number, ampA: number, ampB: number, ampC: number): number {
   const u = x / W;
@@ -615,12 +617,14 @@ export function drawHUD(ctx: CanvasRenderingContext2D, state: GameState) {
   // Progress bar fill (proportional to current level)
   const progress = (current + 1) / total;
   const fillW = Math.round(barW * progress);
-  const grad = ctx.createLinearGradient(HUD_LEFT, 0, HUD_LEFT + barW, 0);
-  grad.addColorStop(0, "#00e5ff");
-  grad.addColorStop(1, "#cc00ff");
+  if (!_hudGrad) {
+    _hudGrad = ctx.createLinearGradient(HUD_LEFT, 0, HUD_LEFT + barW, 0);
+    _hudGrad.addColorStop(0, "#00e5ff");
+    _hudGrad.addColorStop(1, "#cc00ff");
+  }
   ctx.shadowBlur = 6;
   ctx.shadowColor = "#00e5ff";
-  ctx.fillStyle = grad;
+  ctx.fillStyle = _hudGrad;
   ctx.fillRect(HUD_LEFT, barY, fillW, barH);
 
   // Level tick marks

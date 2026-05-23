@@ -191,34 +191,33 @@ export function triggerSwitchSplat(state: GameState, fluid: FluidSim) {
   }
 }
 
-export function applyFluidToPlayer(state: GameState, fluid: FluidSim, dt: number) {
-  const sampleRadius = PLAYER_R * PLAYER_FLUID_SAMPLE_RADIUS;
-  const samples = [
-    { x: 0, y: 0, w: 1.5 },
-    { x: -sampleRadius, y: 0, w: 1 },
-    { x: sampleRadius, y: 0, w: 1 },
-    { x: 0, y: -sampleRadius, w: 1 },
-    { x: 0, y: sampleRadius, w: 1 },
-    { x: -sampleRadius * 0.7, y: -sampleRadius * 0.7, w: 0.65 },
-    { x: sampleRadius * 0.7, y: -sampleRadius * 0.7, w: 0.65 },
-    { x: -sampleRadius * 0.7, y: sampleRadius * 0.7, w: 0.65 },
-    { x: sampleRadius * 0.7, y: sampleRadius * 0.7, w: 0.65 },
-  ];
+const _sr = PLAYER_R * PLAYER_FLUID_SAMPLE_RADIUS;
+const PLAYER_SAMPLES: { x: number; y: number; w: number }[] = [
+  { x: 0,           y: 0,           w: 1.5  },
+  { x: -_sr,        y: 0,           w: 1    },
+  { x:  _sr,        y: 0,           w: 1    },
+  { x: 0,           y: -_sr,        w: 1    },
+  { x: 0,           y:  _sr,        w: 1    },
+  { x: -_sr * 0.7,  y: -_sr * 0.7,  w: 0.65 },
+  { x:  _sr * 0.7,  y: -_sr * 0.7,  w: 0.65 },
+  { x: -_sr * 0.7,  y:  _sr * 0.7,  w: 0.65 },
+  { x:  _sr * 0.7,  y:  _sr * 0.7,  w: 0.65 },
+];
+const PLAYER_SAMPLE_WEIGHT = PLAYER_SAMPLES.reduce((s, p) => s + p.w, 0);
 
-  let totalWeight = 0;
+export function applyFluidToPlayer(state: GameState, fluid: FluidSim, dt: number) {
   let u = 0;
   let v = 0;
-  for (const sample of samples) {
+  for (const sample of PLAYER_SAMPLES) {
     const gi = toGrid(state.player.x + sample.x, state.W);
     const gj = toGrid(state.player.y + sample.y, state.H);
     const idx = IX(gi, gj);
     u += fluid.u[idx] * sample.w;
     v += fluid.v[idx] * sample.w;
-    totalWeight += sample.w;
   }
 
-  const avgU = u / totalWeight;
-  const avgV = v / totalWeight;
+  const avgU = u / PLAYER_SAMPLE_WEIGHT;
+  const avgV = v / PLAYER_SAMPLE_WEIGHT;
   const cloudSpatialHit = isPlayerInActiveHelperCloud(state);
   const inCloudNow =
     avgV < HELPER_CLOUD_DOUBLE_JUMP_THRESHOLD || cloudSpatialHit;

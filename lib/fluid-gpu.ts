@@ -1,12 +1,10 @@
 // Full GPU Stam fluid simulation — "Real-Time Fluid Dynamics for Games" (2003)
-// Simulation runs entirely at N_GPU×N_GPU on the GPU via WebGL2.
+// Simulation runs entirely at n×n on the GPU via WebGL2.
+// n and iterPressure are chosen at runtime by detectGPUTier().
 
-export const N_GPU = 512;
-
-const ITER_PRESSURE = 40;  // Jacobi iterations per projection pass (×2)
-const VORT_EPS      = 0.38;
-const VEL_DAMP      = 0.9985;
-const DENS_DECAY    = 0.982;
+const VORT_EPS    = 0.38;
+const VEL_DAMP    = 0.9985;
+const DENS_DECAY  = 0.982;
 const DENSITY_MIN = 0;
 const DENSITY_MAX = 1;
 const VELOCITY_MIN = -10;
@@ -17,8 +15,6 @@ function safeClamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
 }
 
-// ─── GLSL ────────────────────────────────────────────────────────────────────
-
 const VERT = `#version 300 es
 layout(location=0) in vec2 aPos;
 out vec2 vUv;
@@ -27,8 +23,8 @@ void main(){
   gl_Position = vec4(aPos,0.0,1.0);
 }`;
 
-// Semi-Lagrangian advection — uDissipation=1 for velocity, DENS_DECAY for density
-const FRAG_ADVECT = `#version 300 es
+function buildShaders(n: number) {
+  const FRAG_ADVECT = `#version 300 es
 precision highp float;
 uniform sampler2D uField;
 uniform sampler2D uVel;
@@ -37,22 +33,20 @@ uniform float uDissipation;
 in vec2 vUv;
 out vec4 o;
 void main(){
-  const float N=${N_GPU}.0;
-  // Stam: i_bt = i - dt*N*u  →  uv_bt = vUv - vel*dt  (vel in [0..1] UV/s units)
+  const float N=${n}.0;
   vec2 vel=texture(uVel,vUv).rg;
   vec2 pos=clamp(vUv-vel*uDt, 0.5/N, 1.0-0.5/N);
   o=texture(uField,pos)*uDissipation;
 }`;
 
-// Pressure Jacobi step: p=(pL+pR+pB+pT+div)/4
-const FRAG_JACOBI = `#version 300 es
+  const FRAG_JACOBI = `#version 300 es
 precision highp float;
 uniform sampler2D uPress;
 uniform sampler2D uDiv;
 in vec2 vUv;
 out vec4 o;
 void main(){
-  const float h=1.0/${N_GPU}.0;
+  const float h=1.0/${n}.0;
   float pL=texture(uPress,vUv-vec2(h,0)).r;
   float pR=texture(uPress,vUv+vec2(h,0)).r;
   float pB=texture(uPress,vUv-vec2(0,h)).r;
@@ -61,14 +55,13 @@ void main(){
   o=vec4((pL+pR+pB+pT+d)*0.25,0,0,1);
 }`;
 
-// Divergence: -0.5*h*(du/dx+dv/dy)  (Stam's exact formula)
-const FRAG_DIVERGENCE = `#version 300 es
+  const FRAG_DIVERGENCE = `#version 300 es
 precision highp float;
 uniform sampler2D uVel;
 in vec2 vUv;
 out vec4 o;
 void main(){
-  const float h=1.0/${N_GPU}.0;
+  const float h=1.0/${n}.0;
   float uR=texture(uVel,vUv+vec2(h,0)).r;
   float uL=texture(uVel,vUv-vec2(h,0)).r;
   float vT=texture(uVel,vUv+vec2(0,h)).g;
@@ -76,15 +69,14 @@ void main(){
   o=vec4(-0.5*h*((uR-uL)+(vT-vB)),0,0,1);
 }`;
 
-// Subtract pressure gradient from velocity
-const FRAG_GRAD_SUB = `#version 300 es
+  const FRAG_GRAD_SUB = `#version 300 es
 precision highp float;
 uniform sampler2D uVel;
 uniform sampler2D uPress;
 in vec2 vUv;
 out vec4 o;
 void main(){
-  const float h=1.0/${N_GPU}.0;
+  const float h=1.0/${n}.0;
   vec2 vel=texture(uVel,vUv).rg;
   float pR=texture(uPress,vUv+vec2(h,0)).r;
   float pL=texture(uPress,vUv-vec2(h,0)).r;
@@ -94,14 +86,13 @@ void main(){
   o=vec4(vel,0,1);
 }`;
 
-// Scalar curl: ∂v/∂x - ∂u/∂y
-const FRAG_CURL = `#version 300 es
+  const FRAG_CURL = `#version 300 es
 precision highp float;
 uniform sampler2D uVel;
 in vec2 vUv;
 out vec4 o;
 void main(){
-  const float h=1.0/${N_GPU}.0;
+  const float h=1.0/${n}.0;
   float vR=texture(uVel,vUv+vec2(h,0)).g;
   float vL=texture(uVel,vUv-vec2(h,0)).g;
   float uT=texture(uVel,vUv+vec2(0,h)).r;
@@ -109,8 +100,7 @@ void main(){
   o=vec4((vR-vL-uT+uB)*0.5/h,0,0,1);
 }`;
 
-// Vorticity confinement + velocity damping
-const FRAG_VORTICITY = `#version 300 es
+  const FRAG_VORTICITY = `#version 300 es
 precision highp float;
 uniform sampler2D uVel;
 uniform sampler2D uCurl;
@@ -120,7 +110,7 @@ uniform float uDamp;
 in vec2 vUv;
 out vec4 o;
 void main(){
-  const float h=1.0/${N_GPU}.0;
+  const float h=1.0/${n}.0;
   float cC=texture(uCurl,vUv).r;
   float cR=abs(texture(uCurl,vUv+vec2(h,0)).r);
   float cL=abs(texture(uCurl,vUv-vec2(h,0)).r);
@@ -136,8 +126,7 @@ void main(){
   o=vec4(vel,0,1);
 }`;
 
-// Gaussian force splat for velocity
-const FRAG_SPLAT_VEL = `#version 300 es
+  const FRAG_SPLAT_VEL = `#version 300 es
 precision highp float;
 uniform sampler2D uVel;
 uniform vec2 uPt;
@@ -151,8 +140,7 @@ void main(){
   o=vec4(texture(uVel,vUv).rg+uForce*w,0,1);
 }`;
 
-// Gaussian splat for density
-const FRAG_SPLAT_DENS = `#version 300 es
+  const FRAG_SPLAT_DENS = `#version 300 es
 precision highp float;
 uniform sampler2D uDens;
 uniform vec2 uPt;
@@ -166,7 +154,7 @@ void main(){
   o=vec4(texture(uDens,vUv).r+uAmt*w,0,0,1);
 }`;
 
-const FRAG_CLAMP_VEL = `#version 300 es
+  const FRAG_CLAMP_VEL = `#version 300 es
 precision highp float;
 uniform sampler2D uVel;
 in vec2 vUv;
@@ -180,7 +168,7 @@ void main(){
   o=vec4(clean(vel.x), clean(vel.y), 0, 1);
 }`;
 
-const FRAG_CLAMP_DENS = `#version 300 es
+  const FRAG_CLAMP_DENS = `#version 300 es
 precision highp float;
 uniform sampler2D uDens;
 in vec2 vUv;
@@ -193,6 +181,13 @@ void main(){
   o=vec4(clean(texture(uDens,vUv).r), 0, 0, 1);
 }`;
 
+  return {
+    FRAG_ADVECT, FRAG_JACOBI, FRAG_DIVERGENCE, FRAG_GRAD_SUB,
+    FRAG_CURL, FRAG_VORTICITY, FRAG_SPLAT_VEL, FRAG_SPLAT_DENS,
+    FRAG_CLAMP_VEL, FRAG_CLAMP_DENS,
+  };
+}
+
 // ─── TYPES ───────────────────────────────────────────────────────────────────
 
 export interface FBO { fbo: WebGLFramebuffer; tex: WebGLTexture }
@@ -204,7 +199,7 @@ export class FluidGPU {
   private gl: WebGL2RenderingContext;
   private vao!: WebGLVertexArrayObject;
 
-  // Simulation ping-pong FBOs (N_GPU × N_GPU)
+  // Simulation ping-pong FBOs (n × n)
   private vel!:  Ping2;  // RG16F — velocity (u,v)
   private dens!: Ping2;  // R16F  — density
   private pres!: Ping2;  // R16F  — pressure
@@ -225,10 +220,15 @@ export class FluidGPU {
 
   private pendingSplats: { x:number; y:number; vx:number; vy:number; dens:number; r:number }[] = [];
 
-  constructor(canvas: HTMLCanvasElement) {
+  private n: number;
+  private iterPressure: number;
+
+  constructor(canvas: HTMLCanvasElement, n: number, iterPressure: number) {
     const gl = canvas.getContext("webgl2");
     if (!gl) throw new Error("WebGL2 not supported");
     this.gl = gl;
+    this.n = n;
+    this.iterPressure = iterPressure;
     if (!gl.getExtension("EXT_color_buffer_float"))
       throw new Error("EXT_color_buffer_float required");
     gl.disable(gl.DEPTH_TEST);
@@ -326,7 +326,7 @@ export class FluidGPU {
     this.pi = 0;
 
     // Jacobi iterations
-    for (let k = 0; k < ITER_PRESSURE; k++) {
+    for (let k = 0; k < this.iterPressure; k++) {
       const dst = 1 - this.pi;
       this.bindFBO(this.pres[dst].fbo);
       this.use("jacobi", (p) => {
@@ -405,7 +405,7 @@ export class FluidGPU {
   private bindFBO(fbo: WebGLFramebuffer) {
     const gl = this.gl;
     gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
-    gl.viewport(0, 0, N_GPU, N_GPU);
+    gl.viewport(0, 0, this.n, this.n);
   }
 
   private use(name: keyof typeof this.progs, setup: (p: WebGLProgram) => void) {
@@ -436,18 +436,19 @@ export class FluidGPU {
   // ── Initialisation ────────────────────────────────────────────────────────────
 
   private buildProgs() {
+    const s = buildShaders(this.n);
     const c = (fs: string) => this.mkProg(fs);
     this.progs = {
-      advect: c(FRAG_ADVECT), jacobi: c(FRAG_JACOBI),
-      div:    c(FRAG_DIVERGENCE), gradSub: c(FRAG_GRAD_SUB),
-      curl:   c(FRAG_CURL),   vort:    c(FRAG_VORTICITY),
-      splatV: c(FRAG_SPLAT_VEL), splatD: c(FRAG_SPLAT_DENS),
-      clampV: c(FRAG_CLAMP_VEL), clampD: c(FRAG_CLAMP_DENS),
+      advect: c(s.FRAG_ADVECT),     jacobi:  c(s.FRAG_JACOBI),
+      div:    c(s.FRAG_DIVERGENCE), gradSub: c(s.FRAG_GRAD_SUB),
+      curl:   c(s.FRAG_CURL),       vort:    c(s.FRAG_VORTICITY),
+      splatV: c(s.FRAG_SPLAT_VEL),  splatD:  c(s.FRAG_SPLAT_DENS),
+      clampV: c(s.FRAG_CLAMP_VEL),  clampD:  c(s.FRAG_CLAMP_DENS),
     };
   }
 
   private initSim() {
-    const N = N_GPU;
+    const N = this.n;
     const m2 = (rg: boolean): Ping2 => [this.mkSimFBO(N, N, rg), this.mkSimFBO(N, N, rg)];
     this.vel  = m2(true);   // RG16F
     this.dens = m2(false);  // R16F

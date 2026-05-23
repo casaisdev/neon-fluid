@@ -6,6 +6,8 @@ const IDLE_FREQ = 1.4 * Math.PI * 2; // rad/s
 const IDLE_AMP = 1.5; // px
 const STRETCH_MAX = 3; // px at MAX_HSPEED
 
+const _pts: [number, number][] = Array.from({ length: N_BLOB }, () => [0, 0] as [number, number]);
+
 export function drawPlayer(ctx: CanvasRenderingContext2D, state: GameState) {
   const { player, squashTimer, jumpGlowTimer, gameTime } = state;
 
@@ -22,7 +24,6 @@ export function drawPlayer(ctx: CanvasRenderingContext2D, state: GameState) {
   if (speed > 1) { vDirX = player.vx / speed; vDirY = player.vy / speed; }
 
   // Build 8 displaced blob control points
-  const pts: [number, number][] = [];
   for (let i = 0; i < N_BLOB; i++) {
     const angle = (i / N_BLOB) * Math.PI * 2;
     const cx = Math.cos(angle) * PLAYER_R;
@@ -45,7 +46,8 @@ export function drawPlayer(ctx: CanvasRenderingContext2D, state: GameState) {
     px += Math.cos(angle) * breath;
     py += Math.sin(angle) * breath;
 
-    pts.push([px, py]);
+    _pts[i][0] = px;
+    _pts[i][1] = py;
   }
 
   ctx.save();
@@ -58,13 +60,12 @@ export function drawPlayer(ctx: CanvasRenderingContext2D, state: GameState) {
 
   // Draw closed Catmull-Rom bezier through blob points
   ctx.beginPath();
-  const n = pts.length;
-  ctx.moveTo(pts[0][0], pts[0][1]);
-  for (let i = 0; i < n; i++) {
-    const p0 = pts[(i - 1 + n) % n];
-    const p1 = pts[i];
-    const p2 = pts[(i + 1) % n];
-    const p3 = pts[(i + 2) % n];
+  ctx.moveTo(_pts[0][0], _pts[0][1]);
+  for (let i = 0; i < N_BLOB; i++) {
+    const p0 = _pts[(i - 1 + N_BLOB) % N_BLOB];
+    const p1 = _pts[i];
+    const p2 = _pts[(i + 1) % N_BLOB];
+    const p3 = _pts[(i + 2) % N_BLOB];
     // Catmull-Rom → cubic bezier: cp = p ± (next - prev) / 6
     const cp1x = p1[0] + (p2[0] - p0[0]) / 6;
     const cp1y = p1[1] + (p2[1] - p0[1]) / 6;
