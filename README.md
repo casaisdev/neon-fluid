@@ -70,9 +70,9 @@ The player character is a fluid blob that responds to mouse-generated pressure. 
 
 ## Audio
 
-All sound is synthesized in real time using the Web Audio API — no audio samples except the menu theme (`theme.mp3`).
+Sound effects and ambient layers are synthesized in real time with the Web Audio API. Level music first tries to play a looping audio asset (`theme.mp3`), and falls back to procedural synthesis if asset playback fails.
 
-Each of the 100 levels gets a unique procedural music track derived from its index: a root frequency chosen from an 8-note cycle, alternating major/minor tonality, a tempo that increases by 1 BPM per level, and an arpeggiator step time that cycles through four rhythmic patterns. Three synthesis layers play simultaneously: a detuned bass oscillator with LFO, a chord pad, and a delay-fed arpeggiator. The menu has a separate ambient drone with a shimmer layer.
+Procedural level music is derived from the level index: root frequency from an 8-note cycle, alternating major/minor tonality, tempo `60 + (levelIndex % 40)`, and arpeggiator step time cycling through four rhythmic patterns. Three layers run simultaneously: a bass oscillator with LFO modulation, a detuned chord pad, and a delay-fed arpeggiator. The menu has a separate ambient drone plus a shimmer layer.
 
 Sound preference persists in `localStorage`.
 
